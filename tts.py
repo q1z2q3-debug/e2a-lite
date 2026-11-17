@@ -24,7 +24,7 @@ import sys
 import wave
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 APP = "e2a-lite"
 SENT_RE = re.compile(r"[^。！？；…!?\n]+[。！？；…!?]?")
 CHAPTER_RE = re.compile(r"^(?:#{1,4}\s+.+|第[一二三四五六七八九十百零〇0-9]+[章篇回节部].*)$")
@@ -35,19 +35,38 @@ SR = 22050
 
 # ---------------------------------------------------------------- 文本切分
 def split_chapters(text: str, title: str) -> list[dict]:
-    """按 Markdown 标题或「第 N 章」切章节；无标题时整篇一章。"""
+    """按 Markdown 标题切章节。
+
+    `##` 作章；`###` 及更深一级的标题并入所在章，作为该章的首行小标题（朗读时会读出来），
+    这样《心经通释》里反复出现的「原文」「般若深解」不会被切成两百个同名章。
+    没有 `##` 时退化为「每个标题一章」，再没有就整篇一章。
+    """
+    has_l2 = bool(re.search(r"^##\s+", text, re.M))
     chapters: list[dict] = []
     cur = {"title": title, "lines": []}
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
-        if CHAPTER_RE.match(line) and len(line) <= 60:
+        m2 = re.match(r"^##\s+(.+)$", line)
+        m3 = re.match(r"^###\s+(.+)$", line)
+        m1 = re.match(r"^#\s+(.+)$", line)
+        if has_l2 and m3 and cur["lines"] is not None:
+            cur["lines"].append(m3.group(1).strip())
+            continue
+        if m2:
             if cur["lines"]:
                 chapters.append(cur)
-            cur = {"title": line.lstrip("#").strip(), "lines": []}
-        else:
-            cur["lines"].append(line)
+            cur = {"title": m2.group(1).strip(), "lines": []}
+            continue
+        if m1 and not has_l2:
+            if cur["lines"]:
+                chapters.append(cur)
+            cur = {"title": m1.group(1).strip(), "lines": []}
+            continue
+        if m1:
+            continue
+        cur["lines"].append(line)
     if cur["lines"]:
         chapters.append(cur)
     return chapters or [{"title": title, "lines": []}]
@@ -180,11 +199,43 @@ def _init_worker(voice_path: str, speed: float) -> None:
     _V["cfg"] = SynthesisConfig(length_scale=speed)
 
 
-def _synth(job: tuple[str, str]) -> tuple[str, float]:
-    text, path = job
+def _ok_wav(path: Path) -> bool:
+    """缓存文件是否可用：存在且时长可读、大于 20 ms。"""
+    try:
+        return path.exists() and ffprobe_duration(path) > 0.02
+    except Exception:
+        return False
+
+
+def _silent_wav(path: str, sr: int = 22050, seconds: float = 0.05) -> None:
     with wave.open(path, "wb") as f:
-        _V["voice"].synthesize_wav(text, f, syn_config=_V["cfg"])
-    return path, wav_duration(Path(path))
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        f.writeframes(b"\x00\x00" * int(sr * seconds))
+
+
+def _synth(job: tuple[str, str]) -> tuple[str, float]:
+    """合成一句。参数先写死再交给 piper：极短或全是符号的句子会让 piper 不写头，
+    直接报 `# channels not specified`；这里补静音兜底，绝不中断整本。"""
+    text, path = job
+    sr = int(getattr(_V["voice"].config, "sample_rate", 22050) or 22050)
+    with wave.open(path, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sr)
+        try:
+            _V["voice"].synthesize_wav(text, f, syn_config=_V["cfg"])
+        except Exception as e:  # 单句失败不影响全本
+            print(f"[build] 跳过异常句：{text[:18]}… ({e})", flush=True)
+    try:
+        d = wav_duration(Path(path))
+    except Exception:
+        d = 0.0
+    if d <= 0.02:
+        _silent_wav(path, sr)
+        d = 0.05
+    return path, d
 
 
 # ---------------------------------------------------------------- build
@@ -199,15 +250,24 @@ def build(args) -> dict:
     voice_name = voice_path.stem
 
     chapters = split_chapters(extract_text(src), book)
+    excl = getattr(args, "exclude", "") or ""
+    if excl:
+        pat = re.compile(excl)
+        dropped = [c["title"] for c in chapters if pat.search(c["title"])]
+        chapters = [c for c in chapters if not pat.search(c["title"])]
+        for t in dropped:
+            print(f"[build] 跳过章节：{t}")
     if getattr(args, "clean", False):
         chapters = clean_chapters(chapters)
+    if not chapters:
+        raise RuntimeError("排除后没有可读章节")
     jobs, plan = [], []
     for ci, ch in enumerate(chapters):
         for s in split_sentences(ch["lines"], args.max_len):
             key = cache_key(s, voice_name, args.speed)
             wav = cache / f"{key}.wav"
             plan.append((ci, s, wav))
-            if not wav.exists():
+            if not _ok_wav(wav):
                 jobs.append((s, str(wav)))
 
     todo = len(jobs)
@@ -223,11 +283,12 @@ def build(args) -> dict:
 
     return _render(plan, chapters, outdir, book, args.artist, args.formats,
                    voice_name, args.speed, len(plan) - todo, todo, engine="piper", cache=cache, src=src, extras={"speed": args.speed},
-                   clean_flag=getattr(args, "clean", False))
+                   clean_flag=getattr(args, "clean", False), br=getattr(args, "bitrate", "128k"))
 
 
 def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
-            hits, misses, engine="piper", cache=None, src="", extras=None, clean_flag=False):
+            hits, misses, engine="piper", cache=None, src="", extras=None, clean_flag=False,
+            br="128k"):
     """按 plan（(章序, 句, wav)）拼出 mp3/m4b/srt/vtt/manifest；build 与 assemble 共用。"""
     outdir.mkdir(parents=True, exist_ok=True)
     cache = Path(cache) if cache else outdir / ".tmp" / "gap"
@@ -282,13 +343,13 @@ def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
     produced = []
     if "mp3" in formats:
         p = outdir / f"{book}.mp3"
-        run(["ffmpeg", "-y", "-v", "quiet", "-i", str(full), "-c:a", "libmp3lame", "-b:a", "128k",
+        run(["ffmpeg", "-y", "-v", "quiet", "-i", str(full), "-c:a", "libmp3lame", "-b:a", br,
              "-metadata", f"title={book}", "-metadata", f"artist={artist}", str(p)])
         produced.append(p)
     if "m4b" in formats:
         p = outdir / f"{book}.m4b"
         run(["ffmpeg", "-y", "-v", "quiet", "-i", str(full), "-i", str(meta), "-map_metadata", "1",
-             "-c:a", "aac", "-b:a", "128k", "-f", "mp4", str(p)])
+             "-c:a", "aac", "-b:a", br, "-f", "mp4", str(p)])
         produced.append(p)
     if "srt" in formats:
         p = outdir / f"{book}.srt"
@@ -440,10 +501,41 @@ def assemble(args) -> dict:
     return _render(plan, chapters, outdir, book, args.artist, args.formats,
                    args.engine, 1.0, 0, len(plan), engine=args.engine,
                    cache=work / "gap", src=src,
-                   clean_flag=getattr(args, "clean", False),
+                   clean_flag=getattr(args, "clean", False), br=getattr(args, "bitrate", "128k"),
                    extras={"speed": 1.0, "source_audio_dir": str(wavdir),
                            "cue_mode": mode,
                            "sentence_timing": "measured" if measured_all else "part measured"})
+
+
+def split_book(args) -> int:
+    """按 manifest 的章节时间点，把整本音频切成单章文件（mp3 + srt 片段）。"""
+    outdir = Path(args.out)
+    outdir.mkdir(parents=True, exist_ok=True)
+    man = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    marks = man["chapter_marks"]
+    total = ffprobe_duration(Path(args.audio)) or man["audio_seconds"]
+    starts = [m["t"] if isinstance(m, dict) else m[0] for m in marks]
+    srt_items = parse_srt(Path(args.srt)) if args.srt and Path(args.srt).exists() else []
+    for i, m in enumerate(marks):
+        t = starts[i]
+        title = m["title"] if isinstance(m, dict) else m[1]
+        end = starts[i + 1] if i + 1 < len(starts) else total
+        safe = re.sub(r"[^\w\u4e00-\u9fff·]+", "-", title).strip("-")[:48] or f"ch{i+1:02d}"
+        name = f"{i + 1:02d}-{safe}"
+        run(["ffmpeg", "-y", "-v", "quiet", "-ss", f"{t:.3f}", "-to", f"{end:.3f}",
+             "-i", args.audio, "-c:a", "libmp3lame", "-b:a", args.bitrate,
+             str(outdir / f"{name}.mp3")])
+        if srt_items:
+            blocks = []
+            for it in srt_items:
+                if it["start"] >= t - 0.01 and it["end"] <= end + 0.01:
+                    blocks.append((it["start"] - t, it["end"] - t, it["text"]))
+            text = "".join(
+                f"{j}\n{srt_ts(a)} --> {srt_ts(b)}\n{txt}\n"
+                for j, (a, b, txt) in enumerate(blocks, 1))
+            (outdir / f"{name}.srt").write_text(text, encoding="utf-8")
+        print(f"[split] {name}.mp3  {t:.1f}–{end:.1f}s", flush=True)
+    return 0
 
 
 # ---------------------------------------------------------------- check
@@ -564,6 +656,8 @@ def main() -> int:
     b.add_argument("--jobs", type=int, default=min(2, os.cpu_count() or 1))
     b.add_argument("--max-len", type=int, default=70, help="单句最大字数，过长按逗号断")
     b.add_argument("--clean", action="store_true", help="朗读前去掉（阴）（阳）（太极）等框架标注与图注")
+    b.add_argument("--exclude", default="", help="按正则跳过章节标题，如 编辑札记")
+    b.add_argument("--bitrate", default="128k", help="音频码率，如 96k / 128k")
     b.add_argument("--cache", default=None)
     b.set_defaults(func=build)
 
@@ -582,12 +676,21 @@ def main() -> int:
     a.add_argument("--formats", default="mp3,m4b,srt,vtt")
     a.add_argument("--max-len", type=int, default=70)
     a.add_argument("--clean", action="store_true", help="朗读前清洗框架标注（字幕同步使用清洗后文本）")
+    a.add_argument("--bitrate", default="128k")
     a.add_argument("--trim", action="store_true", help="削掉句首句尾静音")
     a.add_argument("--cue-mode", choices=["auto", "sentence", "paragraph"], default="auto",
                    help="音频与文本的对应粒度：一句一文件 / 一段一文件")
     a.add_argument("--align", choices=["silence", "none"], default="silence",
                    help="逐段音频时，用实测停顿切句（默认）还是整段作一条")
     a.set_defaults(func=assemble)
+
+    sp = sub.add_parser("split", help="按章节把整本音频切成单章")
+    sp.add_argument("--audio", required=True)
+    sp.add_argument("--manifest", required=True)
+    sp.add_argument("--srt", default=None)
+    sp.add_argument("--out", required=True)
+    sp.add_argument("--bitrate", default="96k")
+    sp.set_defaults(func=split_book)
 
     v = sub.add_parser("voices", help="列出本地音色")
     v.set_defaults(func=voices)

@@ -124,3 +124,16 @@ class TestClean(unittest.TestCase):
     def test_body_words_untouched(self):
         src = "太极本体之中，本无苦、亦无除苦之法。"
         self.assertEqual(tts.clean_line(src), src)
+
+
+class TestChapterHierarchy(unittest.TestCase):
+    def test_h3_folds_into_chapter(self):
+        text = "# 书\n\n## 第一章\n\n### 原文\n\n甲。\n\n### 深解\n\n乙。\n\n## 第二章\n\n丙。\n"
+        ch = tts.split_chapters(text, "书")
+        self.assertEqual([c["title"] for c in ch], ["第一章", "第二章"])
+        self.assertEqual(ch[0]["lines"], ["原文", "甲。", "深解", "乙。"])
+
+    def test_no_h2_falls_back(self):
+        text = "# 甲\n\n一。\n\n# 乙\n\n二。\n"
+        ch = tts.split_chapters(text, "书")
+        self.assertEqual([c["title"] for c in ch], ["甲", "乙"])
