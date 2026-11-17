@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>e2a-lite · 电子书转有声书（无显卡也能跑）</title>
+<meta name="description" content="e2a-lite：把 txt／md／epub／pdf／docx 做成带精确句级字幕、带章节、可增量重跑的有声书。纯 CPU，2 核 3 GB 实测 15 倍实时。">
+<link rel="canonical" href="https://q1z2q3-debug.github.io/e2a-lite/">
+<meta property="og:title" content="e2a-lite · 电子书转有声书">
+<meta property="og:description" content="句级真实时间戳、句子级缓存、质检脚本；无显卡也跑得动。">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23F7F4EE'/><path d='M9 8v16M23 8v16' stroke='%23994433' stroke-width='2'/><path d='M9 12h14M9 16h14M9 20h14' stroke='%2325211D' stroke-width='1.2'/></svg>">
+<style>
+:root{--paper:#F7F4EE;--paper2:#FCFAF6;--ink:#25211D;--ink2:#3B352F;--ochre:#994433;--brown:#7C6D5C;--line:#DCD5C8;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+ font-family:"Noto Serif SC","Songti SC","Source Han Serif SC",serif;line-height:1.9;-webkit-font-smoothing:antialiased;}
+.wrap{max-width:860px;margin:0 auto;padding:64px 26px 96px;}
+.series{font-size:12.5px;letter-spacing:.32em;color:var(--brown);text-align:center;}
+h1{font-size:clamp(30px,7vw,44px);font-weight:600;letter-spacing:.08em;text-align:center;margin:18px 0 10px;}
+.sub{text-align:center;font-size:14px;letter-spacing:.14em;color:var(--brown);}
+.rule{height:1px;background:var(--line);margin:34px 0;}
+.lead{font-size:16.5px;color:var(--ink2);text-align:justify;margin:30px 0 0;line-height:2;}
+.lead em{font-style:normal;color:var(--ochre);}
+h2{font-size:15px;font-weight:600;letter-spacing:.2em;color:var(--ochre);margin:52px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--line);}
+.player{display:flex;gap:16px;align-items:center;background:var(--paper2);border:1px solid var(--line);padding:18px 20px;}
+.player audio{flex:1 1 auto;min-width:0;width:100%;}
+.player-note{font-size:13px;color:var(--brown);margin:10px 0 0;line-height:1.9;}
+.player-note a{color:var(--ochre);text-decoration:none;border-bottom:1px solid rgba(153,68,51,.35)}
+pre{background:var(--paper2);border:1px solid var(--line);padding:16px 18px;overflow-x:auto;
+ font-family:ui-monospace,"SFMono-Regular",Menlo,monospace;font-size:13px;line-height:1.75;color:var(--ink2);}
+pre .c{color:#9A8A77}
+table{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed;}
+th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word;}
+th{font-weight:600;color:var(--ochre);font-size:13px;letter-spacing:.08em;}
+td.num{font-family:ui-monospace,Menlo,monospace;color:var(--ink2)}
+ul.plain{list-style:none;margin:0;padding:0;font-size:15px;color:var(--ink2)}
+ul.plain li{padding:8px 0;border-bottom:1px dotted #E6DFD2;display:flex;gap:12px}
+ul.plain li i{font-style:normal;color:var(--ochre);flex:0 0 auto;font-size:13px;letter-spacing:.1em}
+.note{font-size:13.5px;color:var(--brown);line-height:2;margin:18px 0 0;}
+.meta{margin-top:46px;font-size:13px;color:var(--brown);line-height:2.1;}
+.foot{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);font-size:12px;letter-spacing:.18em;color:#9A8A77;text-align:center;}
+@media(max-width:640px){.wrap{padding:34px 18px 60px}table{font-size:13px}th,td{padding:9px 6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="series">e2a-lite · 电 子 书 转 有 声 书</div>
+  <h1>一本书，一副字幕，一条命令</h1>
+  <div class="sub">纯 CPU · 句级精确时间轴 · 改一句只重算一句</div>
+
+  <p class="lead">把 txt／md／html／docx／epub／pdf 丢进去，出来 mp3、带章节的 m4b、逐句对齐的 srt／vtt，还有一份可核对的 manifest。<em>字幕时间不是估的</em>——每句单独合成、逐句计时再累加；渲染完由 <code>check</code> 验一遍时间轴、静音与响度，不过关就报错。</p>
+
+  <div class="rule"></div>
+
+  <h2>试 听</h2>
+  <div class="player">
+    <audio controls preload="metadata" src="samples/心经.mp3"></audio>
+  </div>
+  <p class="player-note">《般若波罗蜜多心经》全篇，57.7 秒，两章（正文／咒），中文音色 <code>zh_CN-huayan-medium</code>。
+  <a href="samples/心经.srt">字幕 srt</a> · <a href="samples/心经.m4b">章节版 m4b</a> · <a href="samples/manifest.json">manifest</a>。
+  这台机器是 2 核 3 GB 无显卡，合成用时 6.9 秒。</p>
+
+  <h2>三 条 命 令</h2>
+<pre>pip install -r requirements.txt
+python3 tts.py fetch --voice zh_CN-huayan-medium
+python3 tts.py build --in 书.md --out out/     <span class="c"># mp3 + m4b + srt + vtt + manifest</span>
+python3 tts.py check --audio out/书.mp3 --srt out/书.srt</pre>
+
+  <h2>它 强 在 哪</h2>
+  <table>
+    <tr><th style="width:23%">能力</th><th style="width:40%">ebook2audiobook</th><th>e2a-lite</th></tr>
+    <tr><td>硬件</td><td>建议 4 GB VRAM 起</td><td>2 核 / 2 GB 内存 / 无显卡，实测 15× 实时</td></tr>
+    <tr><td>字幕</td><td>段落级、估算</td><td class="num">句级真实时间戳，逐句计时累加</td></tr>
+    <tr><td>增量</td><td>整章或整本重跑</td><td>句子级 hash 缓存，改一句只算一句</td></tr>
+    <tr><td>质检</td><td>无</td><td class="num">check：单调／首尾／重叠／静音／响度／覆盖率</td></tr>
+    <tr><td>可审计</td><td>日志</td><td class="num">manifest.json 记音色、语速、章句数、缓存命中</td></tr>
+    <tr><td>输入</td><td>电子书格式为主</td><td>txt／md／html／docx／epub／pdf</td></tr>
+  </table>
+
+  <h2>实 测</h2>
+  <table>
+    <tr><th style="width:40%">文本</th><th>字数</th><th>音频</th><th>用时</th></tr>
+    <tr><td>《心经》全篇</td><td class="num">260</td><td class="num">57.7 s</td><td class="num">6.9 s</td></tr>
+    <tr><td>长文压测（12 段）</td><td class="num">4,052</td><td class="num">11 min 36 s</td><td class="num">45 s</td></tr>
+    <tr><td>推算《心经通释》全书</td><td class="num">71,207</td><td class="num">≈3.4 h</td><td class="num">≈13 min</td></tr>
+  </table>
+
+  <h2>不 做 什 么</h2>
+  <ul class="plain">
+    <li><i>音色</i>本机不做克隆。3 GB 内存放不下 XTTS，要克隆音色请上有显卡的机器。</li>
+    <li><i>表演</i>Piper 是「稳、清楚、没有演技」，不是真人朗读；情绪化朗读需换引擎或真人。</li>
+    <li><i>多音字</i>古文断句按规则切，个别字会读错；靠小句长与手改源文缓解。</li>
+    <li><i>章节</i>依赖 Markdown 标题或「第 N 章／篇／回」；没标题的长文按整篇一章。</li>
+  </ul>
+
+  <div class="meta">版本 v1.0.0 · 2026-11-17 · MIT 许可 · 示例文本《心经》为公有领域<br>
+    仓库：<a href="https://github.com/q1z2q3-debug/e2a-lite" style="color:#994433">github.com/q1z2q3-debug/e2a-lite</a></div>
+
+  <div class="foot">e2a-lite　·　润 泽 说　·　无 显 卡 也 能 跑 完 一 本</div>
+</div>
+</body>
+</html>

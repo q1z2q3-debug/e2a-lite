@@ -1,0 +1,30 @@
+{
+ "app": "e2a-lite",
+ "version": "1.0.0",
+ "book": "心经",
+ "source": "examples/心经.txt",
+ "voice": "zh_CN-huayan-medium",
+ "speed": 1.0,
+ "chapters": 2,
+ "sentences": 10,
+ "audio_seconds": 57.71,
+ "chapter_marks": [
+  {
+   "t": 0.0,
+   "title": "正文"
+  },
+  {
+   "t": 51.19,
+   "title": "咒"
+  }
+ ],
+ "files": [
+  "心经.mp3",
+  "心经.m4b",
+  "心经.srt",
+  "心经.vtt"
+ ],
+ "cache_hits": 8,
+ "cache_misses": 2,
+ "srt_lines": 10
+}
