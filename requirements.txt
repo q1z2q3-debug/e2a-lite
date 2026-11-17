@@ -1,1 +1,2 @@
 piper-tts[alignment]>=1.4.2
+# 可选：Edge 神经音色引擎（pip install edge-tts）

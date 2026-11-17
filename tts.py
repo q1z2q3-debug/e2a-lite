@@ -22,9 +22,10 @@ import shutil
 import subprocess
 import sys
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 APP = "e2a-lite"
 SENT_RE = re.compile(r"[^。！？；…!?\n]+[。！？；…!?]?")
 CHAPTER_RE = re.compile(r"^(?:#{1,4}\s+.+|第[一二三四五六七八九十百零〇0-9]+[章篇回节部].*)$")
@@ -173,10 +174,20 @@ def clean_line(text: str) -> str:
     只动三类东西：`佛说A（阴）` 这类阴阳太极标注（改为句读）、`【…】` 降为普通文字、
     `*图…` 图注整段丢弃；正文一字不改。
     """
-    s = _FIG.sub("", text)
+    if "编注" in text[:12] or "**编注**" in text:
+        return ""  # 编辑说明不读
+    s = _FIG.sub("", text)  # 图注先整段丢弃
+    if not s.strip():
+        return ""
+    if re.match(r"^\s*!?\[图", text) or re.search(r"\]\(figures/", text):
+        return ""  # 图片链接不读
+    s = re.sub(r"^\s*[-*·•]\s+", "", s)  # 列表符不读
+    s = re.sub(r"^[>\s*]+", "", s)  # 引用符、强调符不读
+    s = s.replace("*", "")  # 星号强调不读
     s = _MARK.sub("，", s)
     s = _BRACKET.sub(r"\1", s)
     s = _EMPTY_PAREN.sub("", s)
+    s = s.replace("｜", "，").replace("|", "，")
     s = _DUP_PUNCT.sub(r"\1", s)
     s = _PUNCT_BEFORE.sub("", s)
     return _EDGE_PUNCT.sub("", s).strip()
@@ -184,7 +195,16 @@ def clean_line(text: str) -> str:
 
 def clean_chapters(chapters: list[dict]) -> list[dict]:
     for ch in chapters:
-        ch["lines"] = [c for c in (clean_line(l) for l in ch["lines"]) if c]
+        out = []
+        for l in ch["lines"]:
+            c = clean_line(l)
+            if not c:
+                continue
+            # 短标题（原文/般若深解/本节小结…）补一个停顿，免得读成一串
+            if len(c) <= 8 and c[-1] not in "。！？：，；、" and not c.endswith("》"):
+                c += "，"
+            out.append(c)
+        ch["lines"] = out
     return chapters
 
 
@@ -378,6 +398,91 @@ def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
     return manifest
 
 
+
+# ---------------------------------------------------------------- edge 引擎
+EDGE_VOICES = {
+    "xiaoxiao": "zh-CN-XiaoxiaoNeural",
+    "yunxi": "zh-CN-YunxiNeural",
+    "yunjian": "zh-CN-YunjianNeural",
+    "xiaoyi": "zh-CN-XiaoyiNeural",
+}
+
+
+def _edge_one(text: str, voice: str, rate: str, dst: Path) -> None:
+    """Edge 神经语音合成一句，落成 wav。"""
+    import asyncio, edge_tts
+    mp3 = dst.with_suffix(".mp3")
+
+    async def go():
+        c = edge_tts.Communicate(text, voice, rate=rate)
+        await c.save(str(mp3))
+
+    asyncio.run(go())
+    run(["ffmpeg", "-y", "-v", "quiet", "-i", str(mp3), "-ar", "24000", "-ac", "1", str(dst)])
+    mp3.unlink(missing_ok=True)
+
+
+def edge_build(args) -> dict:
+    """用 Edge 神经音色整本合成：逐句真实时长，字幕即句界。"""
+    src = Path(args.inp)
+    outdir = Path(args.out)
+    outdir.mkdir(parents=True, exist_ok=True)
+    book = args.title or src.stem
+    chapters = split_chapters(extract_text(src), book)
+    excl = getattr(args, "exclude", "") or ""
+    if excl:
+        pat = re.compile(excl)
+        chapters = [c for c in chapters if not pat.search(c["title"])]
+    if getattr(args, "clean", False):
+        chapters = clean_chapters(chapters)
+    voice = EDGE_VOICES.get(args.voice, args.voice)
+    cache = Path(args.cache) if args.cache else outdir / ".cache_edge"
+    cache.mkdir(parents=True, exist_ok=True)
+    jobs, plan, hits, misses = [], [], 0, 0
+    for ci, ch in enumerate(chapters):
+        for s in split_sentences(ch["lines"], args.max_len):
+            key = hashlib.sha1(f"edge|{voice}|{args.rate}|{s}".encode()).hexdigest()
+            wav = cache / f"{key}.wav"
+            if len(re.findall(r"[\u4e00-\u9fff]", s)) < 2:
+                if not _ok_wav(wav):
+                    _silent_wav(str(wav), 24000, 0.3)
+                hits += 1
+            elif _ok_wav(wav):
+                hits += 1
+            else:
+                jobs.append((s, str(wav), voice, args.rate))
+                misses += 1
+            plan.append((ci, s, wav))
+    print(f"[edge] {book}：{len(chapters)} 章 / {len(plan)} 句 / 待合成 {len(jobs)}（命中 {hits}）", flush=True)
+    if jobs:
+        def work(job):
+            import time
+            t, path, v, r = job
+            last = None
+            for k in range(4):
+                try:
+                    _edge_one(t, v, r, Path(path))
+                    return path, wav_duration(Path(path))
+                except Exception as e:
+                    last = e
+                    time.sleep(0.6 * (2 ** k))
+                    print(f"[edge] 重试 {k + 1}/4：{t[:12]}… ({str(e)[:40]})", flush=True)
+            print(f"[edge] 四次失败，补 0.6s 静音：{t[:16]}…", flush=True)
+            _silent_wav(path, 24000, 0.6)
+            return path, 0.6
+        with ThreadPoolExecutor(args.jobs) as pool:
+            futs = [pool.submit(work, j) for j in jobs]
+            for i, f in enumerate(as_completed(futs), 1):
+                f.result()
+                if i % 20 == 0 or i == len(jobs):
+                    print(f"[edge] 合成 {i}/{len(jobs)}", flush=True)
+    return _render(plan, chapters, outdir, book, args.artist, args.formats,
+                   args.engine, 1.0, hits, misses, engine=args.engine,
+                   cache=cache, src=src, clean_flag=getattr(args, "clean", False),
+                   br=getattr(args, "bitrate", "128k"),
+                   extras={"speed": 1.0, "voice": voice, "rate": args.rate,
+                           "sentence_timing": "measured"})
+
 # ---------------------------------------------------------------- assemble
 def silence_points(path: Path, noise: str = "-38dB", min_dur: float = 0.12) -> list[tuple[float, float]]:
     """返回音频里的静音区间 [(start, end), ...]，用 ffmpeg silencedetect 实测。"""
@@ -466,10 +571,34 @@ def assemble(args) -> dict:
     measured_all = True
 
     mode = "auto" if args.cue_mode == "auto" else args.cue_mode
+    blocks = []
+    if getattr(args, "blocks", ""):
+        blocks = json.loads(Path(args.blocks).read_text(encoding="utf-8"))
+        mode = "block"
     if mode == "auto":
         mode = "paragraph" if len(files) == len(paras) else "sentence"
 
-    if mode == "sentence" and len(files) == len(sents):
+    if mode == "block":
+        if len(files) != len(blocks):
+            print(f"[assemble] 音频 {len(files)} 个，块表 {len(blocks)} 个；请核对")
+            return 2
+        plan = []
+        for k, (blk, f) in enumerate(zip(blocks, files), 1):
+            i0, n = blk["start"], blk["count"]
+            cues = [t for _, t in sents[i0:i0 + n]]
+            ci = sents[i0][0]
+            dur = ffprobe_duration(f)
+            sil = silence_points(f)
+            spans, measured = _align(dur, cues, sil)
+            measured_all = measured_all and measured
+            pieces = work / f"b{k:03d}"
+            pieces.mkdir(exist_ok=True)
+            for j, ((t0, t1), cue) in enumerate(zip(spans, cues), 1):
+                piece = pieces / f"{j:02d}.wav"
+                _slice(f, t0, t1, piece)
+                plan.append((ci, cue, piece))
+        mode = "block"
+    elif mode == "sentence" and len(files) == len(sents):
         plan = [(ci, t, f) for (ci, t), f in zip(sents, files)]
         mode = "sentence"
     elif mode == "paragraph" and len(files) == len(paras):
@@ -677,12 +806,30 @@ def main() -> int:
     a.add_argument("--max-len", type=int, default=70)
     a.add_argument("--clean", action="store_true", help="朗读前清洗框架标注（字幕同步使用清洗后文本）")
     a.add_argument("--bitrate", default="128k")
+    a.add_argument("--blocks", default="", help="块表 JSON：每块对应一个音频文件，块内按停顿切句")
     a.add_argument("--trim", action="store_true", help="削掉句首句尾静音")
     a.add_argument("--cue-mode", choices=["auto", "sentence", "paragraph"], default="auto",
                    help="音频与文本的对应粒度：一句一文件 / 一段一文件")
     a.add_argument("--align", choices=["silence", "none"], default="silence",
                    help="逐段音频时，用实测停顿切句（默认）还是整段作一条")
     a.set_defaults(func=assemble)
+
+    ed = sub.add_parser("edge", help="用 Edge 神经音色整本合成（逐句真实时长）")
+    ed.add_argument("--in", dest="inp", required=True)
+    ed.add_argument("--out", required=True)
+    ed.add_argument("--title", default=None)
+    ed.add_argument("--voice", default="xiaoxiao", help="xiaoxiao/yunxi/yunjian/xiaoyi 或完整音色名")
+    ed.add_argument("--rate", default="-8%", help="语速，如 -8%% / +0%%")
+    ed.add_argument("--max-len", type=int, default=70)
+    ed.add_argument("--jobs", type=int, default=4)
+    ed.add_argument("--formats", default="mp3,m4b,srt,vtt")
+    ed.add_argument("--artist", default="润泽说")
+    ed.add_argument("--engine", default="edge")
+    ed.add_argument("--bitrate", default="128k")
+    ed.add_argument("--clean", action="store_true")
+    ed.add_argument("--exclude", default="")
+    ed.add_argument("--cache", default=None)
+    ed.set_defaults(func=edge_build)
 
     sp = sub.add_parser("split", help="按章节把整本音频切成单章")
     sp.add_argument("--audio", required=True)

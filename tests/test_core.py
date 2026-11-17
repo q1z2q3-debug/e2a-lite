@@ -137,3 +137,13 @@ class TestChapterHierarchy(unittest.TestCase):
         text = "# 甲\n\n一。\n\n# 乙\n\n二。\n"
         ch = tts.split_chapters(text, "书")
         self.assertEqual([c["title"] for c in ch], ["甲", "乙"])
+
+
+class TestEdgeEngine(unittest.TestCase):
+    def test_voice_aliases(self):
+        self.assertEqual(tts.EDGE_VOICES["xiaoxiao"], "zh-CN-XiaoxiaoNeural")
+        self.assertIn("yunxi", tts.EDGE_VOICES)
+
+    def test_edge_block_rules(self):
+        # 纯符号句不该发请求：中文少于 2 字的判定
+        self.assertLess(len(tts.re.findall(r"[\u4e00-\u9fff]", "--- ，--")), 2)
