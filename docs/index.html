@@ -65,7 +65,10 @@ ul.plain li i{font-style:normal;color:var(--ochre);flex:0 0 auto;font-size:13px;
 <pre>pip install -r requirements.txt
 python3 tts.py fetch --voice zh_CN-huayan-medium
 python3 tts.py build --in 书.md --out out/     <span class="c"># mp3 + m4b + srt + vtt + manifest</span>
-python3 tts.py check --audio out/书.mp3 --srt out/书.srt</pre>
+python3 tts.py check --audio out/书.mp3 --srt out/书.srt
+
+<span class="c"># 换引擎：任何 TTS 的逐句音频，一样拿到精确字幕与章节</span>
+python3 tts.py assemble --in 书.md --wavs wavs/ --out out/ --trim --engine 平台TTS</pre>
 
   <h2>它 强 在 哪</h2>
   <table>
@@ -94,7 +97,7 @@ python3 tts.py check --audio out/书.mp3 --srt out/书.srt</pre>
     <li><i>章节</i>依赖 Markdown 标题或「第 N 章／篇／回」；没标题的长文按整篇一章。</li>
   </ul>
 
-  <div class="meta">版本 v1.0.0 · 2026-11-17 · MIT 许可 · 示例文本《心经》为公有领域<br>
+  <div class="meta">版本 v1.1.0 · 2026-11-18 · MIT 许可 · 示例文本《心经》为公有领域<br>
     仓库：<a href="https://github.com/q1z2q3-debug/e2a-lite" style="color:#994433">github.com/q1z2q3-debug/e2a-lite</a></div>
 
   <div class="foot">e2a-lite　·　润 泽 说　·　无 显 卡 也 能 跑 完 一 本</div>

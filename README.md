@@ -18,6 +18,7 @@ ebook2audiobook 的强项是音色克隆（XTTS 系）与引擎数量；它的�
 | 质检 | 无 | `check` 子命令：时间轴单调／首尾吻合／重叠／静音／响度／覆盖率，不通过就退非零 |
 | 可审计 | 日志 | `manifest.json`：音色、语速、章数、句数、时长、缓存命中、章节时间点 |
 | 输入 | 电子书格式为主 | txt／md／html／docx／epub／pdf（pandoc／pdftotext 兜底） |
+| 引擎 | 自带多种、绑定整套依赖 | Piper 开箱即用；**外部 TTS 的逐句音频也能直接组装**（`assemble`） |
 | 输出 | m4b 等 | mp3／m4b（章节标记）／srt／vtt／manifest |
 
 不承诺的事：**本机不做音色克隆**。3 GB 内存放不下 XTTS，这台机器也带不动它。要克隆音色请去有显卡的机器，本项目不假装能做。
@@ -32,6 +33,12 @@ python3 tts.py check --audio out/心经.mp3 --srt out/心经.srt
 ```
 
 产物在 `out/`：`心经.mp3`、`心经.m4b`（两章）、`心经.srt`、`心经.vtt`、`manifest.json`。
+
+用别的引擎（平台 TTS、云服务、你自己的模型）念的逐句音频，也能套上同一套时间轴：
+
+```bash
+python3 tts.py assemble --in 书.md --wavs wavs/s1.wav,wavs/s2.wav/ --out out/ --trim
+```
 
 常用参数：
 

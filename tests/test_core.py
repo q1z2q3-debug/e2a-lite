@@ -55,3 +55,23 @@ class TestSrtRoundTrip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAssembleGuards(unittest.TestCase):
+    def test_natural_order(self):
+        from pathlib import Path
+        names = ["s10.wav", "s2.wav", "s1.wav"]
+        got = sorted(names, key=lambda n: tts._natural(Path(n)))
+        self.assertEqual(got, ["s1.wav", "s2.wav", "s10.wav"])
+
+    def test_count_mismatch_returns_2(self):
+        import argparse
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "a.txt"
+            src.write_text("甲。乙。丙。", encoding="utf-8")
+            wavs = Path(d) / "wavs"; wavs.mkdir()
+            (wavs / "1.wav").write_bytes(b"")
+            args = argparse.Namespace(inp=str(src), wavs=str(wavs), out=str(Path(d) / "out"),
+                                      title=None, engine="t", artist="t", formats="mp3",
+                                      max_len=70, trim=False)
+            self.assertEqual(tts.assemble(args), 2)

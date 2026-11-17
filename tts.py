@@ -177,18 +177,29 @@ def build(args) -> dict:
                 if i % 10 == 0 or i == len(jobs):
                     print(f"[build] 合成 {i}/{len(jobs)}", flush=True)
 
-    sample_rate = SR
+    return _render(plan, chapters, outdir, book, args.artist, args.formats,
+                   voice_name, args.speed, len(plan) - todo, todo, engine="piper", cache=cache, src=src, extras={"speed": args.speed})
+
+
+def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
+            hits, misses, engine="piper", cache=None, src="", extras=None):
+    """按 plan（(章序, 句, wav)）拼出 mp3/m4b/srt/vtt/manifest；build 与 assemble 共用。"""
+    outdir.mkdir(parents=True, exist_ok=True)
+    cache = Path(cache) if cache else outdir / ".tmp" / "gap"
+    cache.mkdir(parents=True, exist_ok=True)
+    sample_rate, channels = SR, 1
     for _, _, wav in plan:
         with wave.open(str(wav), "rb") as w:
-            sample_rate = w.getframerate()
+            sample_rate, channels = w.getframerate(), w.getnchannels()
             break
 
     gaps = {}
     for sec in {round(SILENCE_GAP, 2), round(CHAPTER_GAP, 2)}:
-        g = cache / f"_gap_{sec}.wav"
+        g = cache / f"_gap_{sec}_{sample_rate}_{channels}.wav"
         if not g.exists():
             run(["ffmpeg", "-y", "-v", "quiet", "-f", "lavfi", "-i",
-                 f"anullsrc=r={sample_rate}:cl=mono", "-t", str(sec), str(g)])
+                 f"anullsrc=r={sample_rate}:cl={'stereo' if channels == 2 else 'mono'}",
+                 "-t", str(sec), str(g)])
         gaps[sec] = g
 
     srt, vtt, concat, clock = [], [], [], 0.0
@@ -217,19 +228,19 @@ def build(args) -> dict:
     run(["ffmpeg", "-y", "-v", "quiet", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(full)])
 
     meta = tmp / "meta.txt"
-    lines = [";FFMETADATA1", f"title={book}", f"artist={args.artist}"]
+    lines = [";FFMETADATA1", f"title={book}", f"artist={artist}"]
     for i, (t, title) in enumerate(chap_marks):
         end = chap_marks[i + 1][0] if i + 1 < len(chap_marks) else clock
         lines += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(t*1000)}",
                   f"END={int(end*1000)}", f"title={title}"]
     meta.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    formats = {f.strip() for f in args.formats.split(",") if f.strip()}
+    formats = {f.strip() for f in fmts.split(",") if f.strip()}
     produced = []
     if "mp3" in formats:
         p = outdir / f"{book}.mp3"
         run(["ffmpeg", "-y", "-v", "quiet", "-i", str(full), "-c:a", "libmp3lame", "-b:a", "128k",
-             "-metadata", f"title={book}", "-metadata", f"artist={args.artist}", str(p)])
+             "-metadata", f"title={book}", "-metadata", f"artist={artist}", str(p)])
         produced.append(p)
     if "m4b" in formats:
         p = outdir / f"{book}.m4b"
@@ -246,19 +257,68 @@ def build(args) -> dict:
         produced.append(p)
 
     manifest = {
-        "app": APP, "version": VERSION, "book": book, "source": str(src),
-        "voice": voice_name, "speed": args.speed,
+        "app": APP, "version": VERSION, "book": book, "source": str(src), **(extras or {}),
+        "voice": voice_name, "speed": speed,
         "chapters": len(chapters), "sentences": len(plan),
-        "audio_seconds": round(clock, 2),
+        "audio_seconds": round(clock, 2), "engine": engine,
         "chapter_marks": [{"t": round(t, 2), "title": ti} for t, ti in chap_marks],
         "files": [p.name for p in produced],
-        "cache_hits": len(plan) - todo, "cache_misses": todo,
+        "cache_hits": hits, "cache_misses": misses,
         "srt_lines": len(plan),
     }
     (outdir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     shutil.rmtree(tmp, ignore_errors=True)
     print(json.dumps(manifest, ensure_ascii=False, indent=1))
+    _render.last_manifest = manifest
     return manifest
+    return manifest
+
+
+# ---------------------------------------------------------------- assemble
+AUDIO_EXT = {".wav", ".mp3", ".m4a", ".flac", ".ogg"}
+
+
+def _natural(path: Path) -> list:
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.name)]
+
+
+def _trim(path: Path, dst: Path) -> None:
+    """削掉句首句尾静音，保留 60 ms 呼吸。"""
+    flt = ("silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:detection=peak,"
+           "areverse,"
+           "silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:detection=peak,"
+           "areverse,apad=pad_dur=0.06")
+    run(["ffmpeg", "-y", "-v", "quiet", "-i", str(path), "-af", flt,
+         "-ar", "40000", "-ac", "2", str(dst)])
+
+
+def assemble(args) -> dict:
+    """把任意 TTS 引擎产出的逐句音频组装成带精确字幕与章节的有声书。"""
+    src = Path(args.inp)
+    outdir = Path(args.out)
+    outdir.mkdir(parents=True, exist_ok=True)
+    book = args.title or src.stem
+    chapters = split_chapters(extract_text(src), book)
+    sents = [(ci, s) for ci, ch in enumerate(chapters) for s in split_sentences(ch["lines"], args.max_len)]
+    wavdir = Path(args.wavs)
+    files = sorted([p for p in wavdir.iterdir() if p.suffix.lower() in AUDIO_EXT], key=_natural)
+    if len(files) != len(sents):
+        print(f"[assemble] 句子 {len(sents)} 条，音频 {len(files)} 条，数量不一致；请核对 --wavs 目录")
+        return 2
+    work = outdir / ".tmp"
+    work.mkdir(parents=True, exist_ok=True)
+    plan = []
+    for i, ((ci, text), f) in enumerate(zip(sents, files), 1):
+        w = f
+        if args.trim:
+            w = work / f"{i:03d}.wav"
+            _trim(f, w)
+        plan.append((ci, text, w))
+    print(f"[assemble] {book}：{len(chapters)} 章 / {len(sents)} 句，引擎 {args.engine}", flush=True)
+    return _render(plan, chapters, outdir, book, args.artist, args.formats,
+                   args.engine, 1.0, 0, len(plan), engine=args.engine,
+                   cache=work / "gap", src=src,
+                   extras={"speed": 1.0, "source_audio_dir": str(wavdir)})
 
 
 # ---------------------------------------------------------------- check
@@ -348,8 +408,9 @@ def voices(_args) -> int:
 
 def fetch(args) -> int:
     VOICE_DIR.mkdir(parents=True, exist_ok=True)
-    lang, name, quality = args.voice.split("-")[0], args.voice.split("-")[1], args.voice.split("-")[2]
-    base = f"{HF}/{lang}/{args.voice.split('-')[0]}/{name}/{quality}/"
+    lang_region, name, quality = args.voice.split("-")
+    lang = lang_region.split("_")[0]
+    base = f"{HF}/{lang}/{lang_region}/{name}/{quality}/"
     import urllib.request
     for f in (f"{args.voice}.onnx", f"{args.voice}.onnx.json"):
         dst = VOICE_DIR / f
@@ -383,6 +444,18 @@ def main() -> int:
     c.add_argument("--audio", required=True)
     c.add_argument("--srt", required=True)
     c.set_defaults(func=check)
+
+    a = sub.add_parser("assemble", help="用外部 TTS 的逐句音频组装字幕与章节")
+    a.add_argument("--in", dest="inp", required=True, help="原文 txt/md/docx/epub/pdf")
+    a.add_argument("--wavs", required=True, help="逐句音频目录（按序号排序对应句子）")
+    a.add_argument("--out", required=True, help="输出目录")
+    a.add_argument("--engine", default="api", help="引擎名，写进 manifest")
+    a.add_argument("--title", default=None)
+    a.add_argument("--artist", default="e2a-lite")
+    a.add_argument("--formats", default="mp3,m4b,srt,vtt")
+    a.add_argument("--max-len", type=int, default=70)
+    a.add_argument("--trim", action="store_true", help="削掉句首句尾静音")
+    a.set_defaults(func=assemble)
 
     v = sub.add_parser("voices", help="列出本地音色")
     v.set_defaults(func=voices)
