@@ -77,8 +77,19 @@ def cache_key(text: str, voice: str, speed: float) -> str:
 
 
 def wav_duration(path: Path) -> float:
-    with wave.open(str(path), "rb") as w:
-        return w.getnframes() / w.getframerate()
+    """用 ffprobe 读真实时长。wave 模块会被带附加 chunk 的 RIFF（如平台 TTS 的 AIGC 块）骗出巨大帧数。"""
+    return ffprobe_duration(Path(path))
+
+
+def probe_audio(path: Path) -> tuple[float, int, int]:
+    """返回 (时长, 采样率, 声道)，全部取自 ffprobe，不信 wave 头。"""
+    r = subprocess.run(["ffprobe", "-v", "quiet", "-show_entries",
+                        "format=duration:stream=sample_rate,channels", "-of", "json", str(path)],
+                       capture_output=True, text=True)
+    d = json.loads(r.stdout or "{}")
+    dur = float(d.get("format", {}).get("duration") or 0)
+    st = (d.get("streams") or [{}])[0]
+    return dur, int(st.get("sample_rate") or SR), int(st.get("channels") or 1)
 
 
 def srt_ts(t: float) -> str:
@@ -188,10 +199,8 @@ def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
     cache = Path(cache) if cache else outdir / ".tmp" / "gap"
     cache.mkdir(parents=True, exist_ok=True)
     sample_rate, channels = SR, 1
-    for _, _, wav in plan:
-        with wave.open(str(wav), "rb") as w:
-            sample_rate, channels = w.getframerate(), w.getnchannels()
-            break
+    if plan:
+        _, sample_rate, channels = probe_audio(plan[0][2])
 
     gaps = {}
     for sec in {round(SILENCE_GAP, 2), round(CHAPTER_GAP, 2)}:
@@ -275,6 +284,52 @@ def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
 
 
 # ---------------------------------------------------------------- assemble
+def silence_points(path: Path, noise: str = "-38dB", min_dur: float = 0.12) -> list[tuple[float, float]]:
+    """返回音频里的静音区间 [(start, end), ...]，用 ffmpeg silencedetect 实测。"""
+    proc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-af",
+                           f"silencedetect=noise={noise}:d={min_dur}", "-f", "null", "-"],
+                          capture_output=True, text=True)
+    out = proc.stderr
+    starts = [float(m) for m in re.findall(r"silence_start: ([0-9.]+)", out)]
+    ends = [float(m) for m in re.findall(r"silence_end: ([0-9.]+)", out)]
+    pairs = list(zip(starts, ends + [float("inf")] * (len(starts) - len(ends))))
+    return [(a, b) for a, b in pairs if a > 0.05]
+
+
+def _align(dur: float, cues: list[str],
+           silences: list[tuple[float, float]]) -> tuple[list[tuple[float, float]], bool]:
+    """把 k 条句子按「实测停顿最接近字数预期」挂到时间轴上，返回 (边界列表, 是否全为实测)。"""
+    if len(cues) == 1:
+        return [(0.0, dur)], True
+    cand = [(a + min(b, dur)) / 2 for a, b in silences if a < dur - 0.15]
+    total = sum(len(c) for c in cues) or 1
+    expect, cum = [], 0
+    for c in cues[:-1]:
+        cum += len(c)
+        expect.append(dur * cum / total)
+    used, bounds, measured = [], [], True
+    for e in expect:
+        best = None
+        for i, c in enumerate(cand):
+            if i in used or c >= dur - 0.2:
+                continue
+            if not bounds or c > bounds[-1] + 0.15:
+                if best is None or abs(c - e) < abs(cand[best] - e):
+                    best = i
+        if best is None:
+            bounds.append(e); measured = False
+        else:
+            used.append(best); bounds.append(cand[best])
+    edges = [0.0] + sorted(bounds) + [dur]
+    spans = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+    return spans, measured
+
+
+def _slice(path: Path, t0: float, t1: float, dst: Path) -> None:
+    run(["ffmpeg", "-y", "-v", "quiet", "-ss", f"{max(t0, 0):.3f}", "-to", f"{t1:.3f}",
+         "-i", str(path), "-ar", "40000", "-ac", "2", str(dst)])
+
+
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".flac", ".ogg"}
 
 
@@ -293,32 +348,65 @@ def _trim(path: Path, dst: Path) -> None:
 
 
 def assemble(args) -> dict:
-    """把任意 TTS 引擎产出的逐句音频组装成带精确字幕与章节的有声书。"""
+    """把任意 TTS 引擎产出的音频组装成带精确字幕与章节的有声书。
+
+    两种映射自动识别：
+    - 音频数 = 句数 → 一句一文件，时间轴即真实句长；
+    - 音频数 = 段数 → 一段一文件，段内按实测停顿切句（切不出则退为按字数比例，并在 manifest 标注）。
+    """
     src = Path(args.inp)
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
     book = args.title or src.stem
     chapters = split_chapters(extract_text(src), book)
     sents = [(ci, s) for ci, ch in enumerate(chapters) for s in split_sentences(ch["lines"], args.max_len)]
+    paras = [(ci, p) for ci, ch in enumerate(chapters) for p in ch["lines"] if p.strip()]
     wavdir = Path(args.wavs)
     files = sorted([p for p in wavdir.iterdir() if p.suffix.lower() in AUDIO_EXT], key=_natural)
-    if len(files) != len(sents):
-        print(f"[assemble] 句子 {len(sents)} 条，音频 {len(files)} 条，数量不一致；请核对 --wavs 目录")
-        return 2
+
     work = outdir / ".tmp"
     work.mkdir(parents=True, exist_ok=True)
-    plan = []
-    for i, ((ci, text), f) in enumerate(zip(sents, files), 1):
-        w = f
-        if args.trim:
-            w = work / f"{i:03d}.wav"
-            _trim(f, w)
-        plan.append((ci, text, w))
-    print(f"[assemble] {book}：{len(chapters)} 章 / {len(sents)} 句，引擎 {args.engine}", flush=True)
+    measured_all = True
+
+    mode = "auto" if args.cue_mode == "auto" else args.cue_mode
+    if mode == "auto":
+        mode = "paragraph" if len(files) == len(paras) else "sentence"
+
+    if mode == "sentence" and len(files) == len(sents):
+        plan = [(ci, t, f) for (ci, t), f in zip(sents, files)]
+        mode = "sentence"
+    elif mode == "paragraph" and len(files) == len(paras):
+        mode = "paragraph"
+        plan = []
+        for i, ((ci, para), f) in enumerate(zip(paras, files), 1):
+            cues = split_sentences([para], args.max_len)
+            if args.align == "none" or len(cues) == 1:
+                plan.append((ci, para, f))
+                continue
+            dur = ffprobe_duration(f)
+            sil = silence_points(f)
+            spans, measured = _align(dur, cues, sil)
+            measured_all = measured_all and measured
+            pieces = work / f"p{i:02d}"
+            pieces.mkdir(exist_ok=True)
+            for j, ((t0, t1), cue) in enumerate(zip(spans, cues), 1):
+                piece = pieces / f"{j:02d}.wav"
+                _slice(f, t0, t1, piece)
+                plan.append((ci, cue, piece))
+        if args.align == "none":
+            measured_all = False
+    else:
+        print(f"[assemble] 音频 {len(files)} 个，对不上句数 {len(sents)} 或段数 {len(paras)}；请核对 --wavs")
+        return 2
+
+    print(f"[assemble] {book}：{len(chapters)} 章 / {len(plan)} 条字幕 / 映射 {mode} / "
+          f"刀口{'实测' if measured_all else '含比例估算'}", flush=True)
     return _render(plan, chapters, outdir, book, args.artist, args.formats,
                    args.engine, 1.0, 0, len(plan), engine=args.engine,
                    cache=work / "gap", src=src,
-                   extras={"speed": 1.0, "source_audio_dir": str(wavdir)})
+                   extras={"speed": 1.0, "source_audio_dir": str(wavdir),
+                           "cue_mode": mode,
+                           "sentence_timing": "measured" if measured_all else "part measured"})
 
 
 # ---------------------------------------------------------------- check
@@ -455,6 +543,10 @@ def main() -> int:
     a.add_argument("--formats", default="mp3,m4b,srt,vtt")
     a.add_argument("--max-len", type=int, default=70)
     a.add_argument("--trim", action="store_true", help="削掉句首句尾静音")
+    a.add_argument("--cue-mode", choices=["auto", "sentence", "paragraph"], default="auto",
+                   help="音频与文本的对应粒度：一句一文件 / 一段一文件")
+    a.add_argument("--align", choices=["silence", "none"], default="silence",
+                   help="逐段音频时，用实测停顿切句（默认）还是整段作一条")
     a.set_defaults(func=assemble)
 
     v = sub.add_parser("voices", help="列出本地音色")

@@ -68,10 +68,42 @@ class TestAssembleGuards(unittest.TestCase):
         import argparse
         with tempfile.TemporaryDirectory() as d:
             src = Path(d) / "a.txt"
-            src.write_text("甲。乙。丙。", encoding="utf-8")
+            src.write_text("甲。乙。丙。", encoding="utf-8")  # 1 段 3 句
             wavs = Path(d) / "wavs"; wavs.mkdir()
             (wavs / "1.wav").write_bytes(b"")
+            (wavs / "2.wav").write_bytes(b"")
             args = argparse.Namespace(inp=str(src), wavs=str(wavs), out=str(Path(d) / "out"),
                                       title=None, engine="t", artist="t", formats="mp3",
-                                      max_len=70, trim=False)
+                                      max_len=70, trim=False, cue_mode="auto", align="silence")
             self.assertEqual(tts.assemble(args), 2)
+
+
+class TestProbe(unittest.TestCase):
+    def test_probe_returns_sane_values(self):
+        import subprocess
+        p = "/tmp/_probe_test.wav"
+        subprocess.run(["ffmpeg", "-y", "-v", "quiet", "-f", "lavfi", "-i",
+                        "anullsrc=r=40000:cl=stereo", "-t", "2", p], check=True)
+        from pathlib import Path
+        dur, rate, ch = tts.probe_audio(Path(p))
+        self.assertAlmostEqual(dur, 2.0, delta=0.1)
+        self.assertEqual((rate, ch), (40000, 2))
+
+
+class TestAlign(unittest.TestCase):
+    def test_single_cue_full_span(self):
+        spans, measured = tts._align(10.0, ["一句。"], [])
+        self.assertEqual(spans, [(0.0, 10.0)])
+        self.assertTrue(measured)
+
+    def test_uses_pauses_when_enough(self):
+        sil = [(2.0, 2.4), (5.0, 5.4), (8.0, 8.4)]
+        spans, measured = tts._align(10.0, ["甲甲。", "乙乙。", "丙丙。", "丁丁。"], sil)
+        self.assertEqual(len(spans), 4)
+        self.assertTrue(measured)
+        self.assertTrue(all(spans[i][1] <= spans[i + 1][0] + 1e-6 for i in range(len(spans) - 1)))
+
+    def test_fallback_marks_unmeasured(self):
+        spans, measured = tts._align(10.0, ["甲。", "乙。", "丙。"], [])
+        self.assertEqual(len(spans), 3)
+        self.assertFalse(measured)

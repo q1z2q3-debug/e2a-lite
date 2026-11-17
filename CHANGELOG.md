@@ -12,3 +12,10 @@
 - `tts.py voices` / `tts.py fetch`：音色列示与 HuggingFace 下载。
 - 实测：2 vCPU / 3 GB / 无 GPU，15.4× 实时（4,052 字 → 11 分 36 秒音频，45 秒算完）。
 - 站点 `docs/`：试听样章、特性表、与 ebook2audiobook 的差异、边界说明。
+
+## v1.2.0 · 2026-11-18
+
+- `assemble` 支持**逐段音频**：一段一文件时，用 `silencedetect` 实测段内停顿，把每段切回句子，再套同一套时间轴；切不够就按字数比例补，并在 manifest 写 `sentence_timing: measured / part measured`，不假装精确。
+- 新增 `--cue-mode {auto,sentence,paragraph}`：音频与文本的对应粒度；auto 优先按段匹配，避免「段数与句数恰好相同」时错位。
+- 修时长探测：平台 TTS 的 RIFF 带 AIGC 附加块，Python `wave` 会读出一个荒谬帧数（实测把 10 秒音频读成 7 小时）。改用 ffprobe 取时长、采样率与声道。
+- 实测：平台音色逐段念《心经》10 段 → 108.7 秒、18 条字幕、2 个章节，刀口全为实测停顿。

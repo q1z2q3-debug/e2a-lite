@@ -18,7 +18,7 @@ ebook2audiobook 的强项是音色克隆（XTTS 系）与引擎数量；它的�
 | 质检 | 无 | `check` 子命令：时间轴单调／首尾吻合／重叠／静音／响度／覆盖率，不通过就退非零 |
 | 可审计 | 日志 | `manifest.json`：音色、语速、章数、句数、时长、缓存命中、章节时间点 |
 | 输入 | 电子书格式为主 | txt／md／html／docx／epub／pdf（pandoc／pdftotext 兜底） |
-| 引擎 | 自带多种、绑定整套依赖 | Piper 开箱即用；**外部 TTS 的逐句音频也能直接组装**（`assemble`） |
+| 引擎 | 自带多种、绑定整套依赖 | Piper 开箱即用；**外部 TTS 的音频也能直接组装**（`assemble`，逐句或逐段都行） |
 | 输出 | m4b 等 | mp3／m4b（章节标记）／srt／vtt／manifest |
 
 不承诺的事：**本机不做音色克隆**。3 GB 内存放不下 XTTS，这台机器也带不动它。要克隆音色请去有显卡的机器，本项目不假装能做。
@@ -37,8 +37,11 @@ python3 tts.py check --audio out/心经.mp3 --srt out/心经.srt
 用别的引擎（平台 TTS、云服务、你自己的模型）念的逐句音频，也能套上同一套时间轴：
 
 ```bash
-python3 tts.py assemble --in 书.md --wavs wavs/ --out out/ --trim
+python3 tts.py assemble --in 书.md --wavs 逐句/ --out out/ --trim
+python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   # 一段一文件：用实测停顿切句
 ```
+
+`assemble` 的两种映射自动识别：音频数 = 句数时直接对齐；音频数 = 段数时，用 `silencedetect` 找到段内停顿，把一段切回几行字幕，切不够的按字数比例补，并在 `manifest.json` 标 `sentence_timing: measured / part measured`——不假装精确。
 
 常用参数：
 
