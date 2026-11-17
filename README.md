@@ -66,7 +66,8 @@ python3 tts.py split --audio out/书.mp3 --manifest out/manifest.json --srt out/
 | 《心经》全篇 | 260 | 57.7 s | 6.9 s | 8.4× |
 | 长文压测（12 段） | 4,052 | 11 min 36 s | 45 s | 15.4× |
 | 《心经通释》全书 · Piper | 68,521 | 3 h 22 m | ≈28 min（2 进程） | 36 章、2,879 条字幕 |
-| **《心经通释》全书 · Edge 神经音色** | 63,894 | **4 h 29 m** | ≈20 min（3 线程） | 35 章、2,815 条逐句字幕 |
+| 《心经通释》全书 · Edge 神经音色（xiaoxiao） | 63,894 | 4 h 29 m | ≈20 min（3 线程） | 35 章、2,815 条逐句字幕 |
+| **《心经通释》全书 · 云健男声逐章** | 63,894 | **4 h 42 m** | ≈25 min | 35 章逐章质检 35/35 |
 | 分释篇十（平台音色逐段） | 2,077 | 10 min 00 s | 拼装 22.6 s（12 次调用不在此列） | 107 条字幕，刀口全为实测停顿 |
 | 分释篇十（加 `--clean`） | 2,067 | 9 min 52 s | 同左，仅重录 2 段 | 框架标注不再读出 |
 
@@ -108,6 +109,14 @@ python3 tts.py edge --in 书.md --out out --voice xiaoxiao --rate=-8% --jobs 3 -
 ```
 
 可选音色：`xiaoxiao`（女声温润，默认）、`yunxi`（男声）、`yunjian`（男声浑厚）、`xiaoyi`（女声年轻）。
+
+## 逐章制作（长书推荐）
+
+```bash
+python3 scripts/build_chapters.py --in 书.md --out 输出目录 --voice yunjian --rate=-8%
+```
+
+一章一合成、一章一响度归一、一章一质检；全部通过后才合订成整本（m4b 章标记取实测时长）。产出 `分章/NN-章名.mp3|srt|m4b`、`全书.m4b`、`全书.srt`、`质检.json`。
 
 ## 整本实测
 
