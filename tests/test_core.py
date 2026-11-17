@@ -107,3 +107,19 @@ class TestAlign(unittest.TestCase):
         spans, measured = tts._align(10.0, ["甲。", "乙。", "丙。"], [])
         self.assertEqual(len(spans), 3)
         self.assertFalse(measured)
+
+
+class TestClean(unittest.TestCase):
+    def test_marker_becomes_pause(self):
+        self.assertEqual(tts.clean_line("佛说A（阴）：咒，是假名。"), "佛说：咒，是假名。")
+        self.assertEqual(tts.clean_line("即非A（阳）：般若非物。"), "即非：般若非物。")
+
+    def test_bracket_kept_as_plain_text(self):
+        self.assertEqual(tts.clean_line("如同我们的【三才五蕴太极空杯】。"), "如同我们的三才五蕴太极空杯。")
+
+    def test_figure_caption_dropped(self):
+        self.assertEqual(tts.clean_line("*图二　三才五蕴太极空杯。"), "")
+
+    def test_body_words_untouched(self):
+        src = "太极本体之中，本无苦、亦无除苦之法。"
+        self.assertEqual(tts.clean_line(src), src)

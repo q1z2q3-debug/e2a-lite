@@ -24,7 +24,7 @@ import sys
 import wave
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.3.0"
 APP = "e2a-lite"
 SENT_RE = re.compile(r"[^。！？；…!?\n]+[。！？；…!?]?")
 CHAPTER_RE = re.compile(r"^(?:#{1,4}\s+.+|第[一二三四五六七八九十百零〇0-9]+[章篇回节部].*)$")
@@ -138,6 +138,37 @@ def extract_text(src: Path) -> str:
     raise RuntimeError(f"无法抽取文本：{src}（需要 pandoc 或 pdftotext）")
 
 
+# ---------------------------------------------------------------- 朗读清洗
+_MARK = re.compile(r"[A-Za-zＡ-Ｚ]?[（(](?:阴|阳|太极|三才|五蕴)[）)]")
+_FIG = re.compile(r"\*图[^\n]*")
+_BRACKET = re.compile(r"【([^】]{1,16})】")
+_EMPTY_PAREN = re.compile(r"[（(]\s*[）)]")
+_DUP_PUNCT = re.compile(r"([，、；。])\1+")
+_EDGE_PUNCT = re.compile(r"^[，、；\s]+")
+_PUNCT_BEFORE = re.compile(r"[，、；]+(?=[：。！？])")
+
+
+def clean_line(text: str) -> str:
+    """朗读前清洗：去掉框架标注与图注，不改变正文措辞。
+
+    只动三类东西：`佛说A（阴）` 这类阴阳太极标注（改为句读）、`【…】` 降为普通文字、
+    `*图…` 图注整段丢弃；正文一字不改。
+    """
+    s = _FIG.sub("", text)
+    s = _MARK.sub("，", s)
+    s = _BRACKET.sub(r"\1", s)
+    s = _EMPTY_PAREN.sub("", s)
+    s = _DUP_PUNCT.sub(r"\1", s)
+    s = _PUNCT_BEFORE.sub("", s)
+    return _EDGE_PUNCT.sub("", s).strip()
+
+
+def clean_chapters(chapters: list[dict]) -> list[dict]:
+    for ch in chapters:
+        ch["lines"] = [c for c in (clean_line(l) for l in ch["lines"]) if c]
+    return chapters
+
+
 # ---------------------------------------------------------------- 合成进程
 _V: dict = {}
 
@@ -168,6 +199,8 @@ def build(args) -> dict:
     voice_name = voice_path.stem
 
     chapters = split_chapters(extract_text(src), book)
+    if getattr(args, "clean", False):
+        chapters = clean_chapters(chapters)
     jobs, plan = [], []
     for ci, ch in enumerate(chapters):
         for s in split_sentences(ch["lines"], args.max_len):
@@ -189,11 +222,12 @@ def build(args) -> dict:
                     print(f"[build] 合成 {i}/{len(jobs)}", flush=True)
 
     return _render(plan, chapters, outdir, book, args.artist, args.formats,
-                   voice_name, args.speed, len(plan) - todo, todo, engine="piper", cache=cache, src=src, extras={"speed": args.speed})
+                   voice_name, args.speed, len(plan) - todo, todo, engine="piper", cache=cache, src=src, extras={"speed": args.speed},
+                   clean_flag=getattr(args, "clean", False))
 
 
 def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
-            hits, misses, engine="piper", cache=None, src="", extras=None):
+            hits, misses, engine="piper", cache=None, src="", extras=None, clean_flag=False):
     """按 plan（(章序, 句, wav)）拼出 mp3/m4b/srt/vtt/manifest；build 与 assemble 共用。"""
     outdir.mkdir(parents=True, exist_ok=True)
     cache = Path(cache) if cache else outdir / ".tmp" / "gap"
@@ -267,7 +301,7 @@ def _render(plan, chapters, outdir, book, artist, fmts, voice_name, speed,
 
     manifest = {
         "app": APP, "version": VERSION, "book": book, "source": str(src), **(extras or {}),
-        "voice": voice_name, "speed": speed,
+        "voice": voice_name, "speed": speed, "clean": bool(clean_flag),
         "chapters": len(chapters), "sentences": len(plan),
         "audio_seconds": round(clock, 2), "engine": engine,
         "chapter_marks": [{"t": round(t, 2), "title": ti} for t, ti in chap_marks],
@@ -359,6 +393,8 @@ def assemble(args) -> dict:
     outdir.mkdir(parents=True, exist_ok=True)
     book = args.title or src.stem
     chapters = split_chapters(extract_text(src), book)
+    if getattr(args, "clean", False):
+        chapters = clean_chapters(chapters)
     sents = [(ci, s) for ci, ch in enumerate(chapters) for s in split_sentences(ch["lines"], args.max_len)]
     paras = [(ci, p) for ci, ch in enumerate(chapters) for p in ch["lines"] if p.strip()]
     wavdir = Path(args.wavs)
@@ -404,6 +440,7 @@ def assemble(args) -> dict:
     return _render(plan, chapters, outdir, book, args.artist, args.formats,
                    args.engine, 1.0, 0, len(plan), engine=args.engine,
                    cache=work / "gap", src=src,
+                   clean_flag=getattr(args, "clean", False),
                    extras={"speed": 1.0, "source_audio_dir": str(wavdir),
                            "cue_mode": mode,
                            "sentence_timing": "measured" if measured_all else "part measured"})
@@ -513,6 +550,7 @@ def fetch(args) -> int:
 # ---------------------------------------------------------------- CLI
 def main() -> int:
     ap = argparse.ArgumentParser(prog="tts.py", description=f"{APP} {VERSION}")
+    ap.add_argument("--version", action="version", version=f"{APP} {VERSION}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build", help="生成有声书")
@@ -525,6 +563,7 @@ def main() -> int:
     b.add_argument("--formats", default="mp3,m4b,srt,vtt")
     b.add_argument("--jobs", type=int, default=min(2, os.cpu_count() or 1))
     b.add_argument("--max-len", type=int, default=70, help="单句最大字数，过长按逗号断")
+    b.add_argument("--clean", action="store_true", help="朗读前去掉（阴）（阳）（太极）等框架标注与图注")
     b.add_argument("--cache", default=None)
     b.set_defaults(func=build)
 
@@ -542,6 +581,7 @@ def main() -> int:
     a.add_argument("--artist", default="e2a-lite")
     a.add_argument("--formats", default="mp3,m4b,srt,vtt")
     a.add_argument("--max-len", type=int, default=70)
+    a.add_argument("--clean", action="store_true", help="朗读前清洗框架标注（字幕同步使用清洗后文本）")
     a.add_argument("--trim", action="store_true", help="削掉句首句尾静音")
     a.add_argument("--cue-mode", choices=["auto", "sentence", "paragraph"], default="auto",
                    help="音频与文本的对应粒度：一句一文件 / 一段一文件")

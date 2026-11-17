@@ -61,11 +61,23 @@ ul.plain li i{font-style:normal;color:var(--ochre);flex:0 0 auto;font-size:13px;
   <a href="samples/心经.srt">字幕 srt</a> · <a href="samples/心经.m4b">章节版 m4b</a> · <a href="samples/manifest.json">manifest</a>。
   这台机器是 2 核 3 GB 无显卡，合成用时 6.9 秒。</p>
 
+  <div class="player" style="margin-top:26px">
+    <div style="flex:1 1 100%">
+      <div style="font-size:13px;letter-spacing:.14em;color:#7C6D5C;margin-bottom:8px">真人音色 · 《心经通释》分释篇十 节选（1 分半）</div>
+      <audio controls preload="metadata" src="samples/分释篇十-节选.mp3" style="width:100%"></audio>
+      <div style="font-size:13px;color:#7C6D5C;margin-top:8px">平台真人音色逐段朗读，本项目负责实测停顿切句、字幕与章节；<a href="samples/分释篇十-节选.srt" style="color:#994433">字幕</a>。
+      整章 2,067 字 → 9 分 52 秒、107 条字幕，拼装与质检 22.6 秒。</div>
+    </div>
+  </div>
+
   <h2>三 条 命 令</h2>
-<pre>pip install -r requirements.txt
+<pre>pip install -e .
 python3 tts.py fetch --voice zh_CN-huayan-medium
 python3 tts.py build --in 书.md --out out/     <span class="c"># mp3 + m4b + srt + vtt + manifest</span>
 python3 tts.py check --audio out/书.mp3 --srt out/书.srt
+
+<span class="c"># 朗读前去掉（阴）（阳）（太极）等框架标注与图注，字幕同步</span>
+python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/ --clean
 
 <span class="c"># 换引擎：任何 TTS 的音频，一样拿到精确字幕与章节</span>
 python3 tts.py assemble --in 书.md --wavs 逐句/ --out out/ --trim --engine 平台TTS
@@ -80,6 +92,7 @@ python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   <span class="c">
     <tr><td>质检</td><td>无</td><td class="num">check：单调／首尾／重叠／静音／响度／覆盖率</td></tr>
     <tr><td>可审计</td><td>日志</td><td class="num">manifest.json 记音色、语速、章句数、缓存命中</td></tr>
     <tr><td>输入</td><td>电子书格式为主</td><td>txt／md／html／docx／epub／pdf</td></tr>
+    <tr><td>朗读清洗</td><td>无</td><td>--clean：框架标注转句读、图注丢弃，正文不动</td></tr>
   </table>
 
   <h2>实 测</h2>
@@ -88,6 +101,8 @@ python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   <span class="c">
     <tr><td>《心经》全篇</td><td class="num">260</td><td class="num">57.7 s</td><td class="num">6.9 s</td></tr>
     <tr><td>长文压测（12 段）</td><td class="num">4,052</td><td class="num">11 min 36 s</td><td class="num">45 s</td></tr>
     <tr><td>推算《心经通释》全书</td><td class="num">71,207</td><td class="num">≈3.4 h</td><td class="num">≈13 min</td></tr>
+    <tr><td>分释篇十 · 平台真人音色逐段</td><td class="num">2,077</td><td class="num">10 min 00 s</td><td class="num">拼装 22.6 s</td></tr>
+    <tr><td>分释篇十 · 加 --clean</td><td class="num">2,067</td><td class="num">9 min 52 s</td><td class="num">仅重录 2 段</td></tr>
   </table>
 
   <h2>不 做 什 么</h2>
@@ -98,7 +113,7 @@ python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   <span class="c">
     <li><i>章节</i>依赖 Markdown 标题或「第 N 章／篇／回」；没标题的长文按整篇一章。</li>
   </ul>
 
-  <div class="meta">版本 v1.2.0 · 2026-11-18 · MIT 许可 · 示例文本《心经》为公有领域<br>
+  <div class="meta">版本 v1.3.0 · 2026-11-18 · 旧版 v1.0.0／v1.1.0／v1.2.0 均保留 tag 与 Release · MIT 许可 · 示例文本《心经》为公有领域<br>
     仓库：<a href="https://github.com/q1z2q3-debug/e2a-lite" style="color:#994433">github.com/q1z2q3-debug/e2a-lite</a></div>
 
   <div class="foot">e2a-lite　·　润 泽 说　·　无 显 卡 也 能 跑 完 一 本</div>

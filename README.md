@@ -26,7 +26,7 @@ ebook2audiobook 的强项是音色克隆（XTTS 系）与引擎数量；它的�
 ## 快速开始
 
 ```bash
-pip install -r requirements.txt          # piper-tts[alignment]
+pip install -e .                         # 也可以 pip install -r requirements.txt
 python3 tts.py fetch --voice zh_CN-huayan-medium
 python3 tts.py build --in examples/心经.txt --out out/
 python3 tts.py check --audio out/心经.mp3 --srt out/心经.srt
@@ -52,6 +52,7 @@ python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   # 一段一文�
 --formats mp3,srt    # 只出需要的格式
 --cache DIR          # 缓存目录，跨书复用同一句
 --title "书名" --artist "润泽说"
+--clean              # 朗读前去掉（阴）（阳）（太极）等框架标注与图注
 ```
 
 ## 实测
@@ -62,6 +63,7 @@ python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   # 一段一文�
 | 长文压测（12 段） | 4,052 | 11 min 36 s | 45 s | 15.4× |
 | 推算《心经通释》全书 | 71,207 | ≈3.4 h | ≈13 min | — |
 | 分释篇十（平台音色逐段） | 2,077 | 10 min 00 s | 拼装 22.6 s（12 次调用不在此列） | 107 条字幕，刀口全为实测停顿 |
+| 分释篇十（加 `--clean`） | 2,067 | 9 min 52 s | 同左，仅重录 2 段 | 框架标注不再读出 |
 
 机器：2 vCPU（Xeon 8457C）、3 GB 内存、无 GPU、onnxruntime CPU。
 
@@ -75,3 +77,14 @@ python3 tts.py assemble --in 书.md --wavs 逐段/ --out out/   # 一段一文�
 ## 许可
 
 MIT。示例音频为《心经》公有领域文本，由本项目管线生成。
+
+## 版本
+
+| 版本 | 要点 | 状态 |
+|---|---|---|
+| v1.0.0 | 句级字幕、缓存、质检、多格式输入 | 保留（tag + Release） |
+| v1.1.0 | `assemble`：外部 TTS 逐句音频上字幕 | 保留（tag + Release） |
+| v1.2.0 | 逐段音频按实测停顿切句；修 RIFF/AIGC 时长误读 | 保留（tag + Release） |
+| v1.3.0 | `--clean` 朗读清洗、`pyproject.toml`、`--version`、17 项单测 | 当前 |
+
+旧版本一律保留，不覆写历史提交。
