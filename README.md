@@ -37,7 +37,7 @@ python3 tts.py check --audio out/心经.mp3 --srt out/心经.srt
 用别的引擎（平台 TTS、云服务、你自己的模型）念的逐句音频，也能套上同一套时间轴：
 
 ```bash
-python3 tts.py assemble --in 书.md --wavs wavs/s1.wav,wavs/s2.wav/ --out out/ --trim
+python3 tts.py assemble --in 书.md --wavs wavs/ --out out/ --trim
 ```
 
 常用参数：
