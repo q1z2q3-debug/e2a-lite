@@ -1,4 +1,4 @@
-import subprocess, sys, tempfile, unittest
+import shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -78,6 +78,7 @@ class TestAssembleGuards(unittest.TestCase):
             self.assertEqual(tts.assemble(args), 2)
 
 
+@unittest.skipUnless(shutil.which("ffmpeg"), "需要 ffmpeg")
 class TestProbe(unittest.TestCase):
     def test_probe_returns_sane_values(self):
         import subprocess
