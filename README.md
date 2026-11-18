@@ -67,7 +67,8 @@ python3 tts.py split --audio out/书.mp3 --manifest out/manifest.json --srt out/
 | 长文压测（12 段） | 4,052 | 11 min 36 s | 45 s | 15.4× |
 | 《心经通释》全书 · Piper | 68,521 | 3 h 22 m | ≈28 min（2 进程） | 36 章、2,879 条字幕 |
 | 《心经通释》全书 · Edge 神经音色（xiaoxiao） | 63,894 | 4 h 29 m | ≈20 min（3 线程） | 35 章、2,815 条逐句字幕 |
-| **《心经通释》全书 · 云健男声逐章** | 63,894 | **4 h 42 m** | ≈25 min | 35 章逐章质检 35/35 |
+| 《心经通释》全书 · 云健男声逐章 | 63,894 | 4 h 42 m | ≈25 min | 35 章逐章质检 35/35 |
+| **《心经通释》全书 · 表演谱（小句级）** | 63,894 | **5 h 33 m** | ≈2 h | 35 章逐章质检 35/35 |
 | 分释篇十（平台音色逐段） | 2,077 | 10 min 00 s | 拼装 22.6 s（12 次调用不在此列） | 107 条字幕，刀口全为实测停顿 |
 | 分释篇十（加 `--clean`） | 2,067 | 9 min 52 s | 同左，仅重录 2 段 | 框架标注不再读出 |
 
@@ -109,6 +110,16 @@ python3 tts.py edge --in 书.md --out out --voice xiaoxiao --rate=-8% --jobs 3 -
 ```
 
 可选音色：`xiaoxiao`（女声温润，默认）、`yunxi`（男声）、`yunjian`（男声浑厚）、`xiaoyi`（女声年轻）。
+
+## 表演谱（让书“有人在念”，而不是机器在播）
+
+```bash
+python3 scripts/score_chapter.py --book 书.md         # 看某章生成的谱
+python3 scripts/perform.py --score s.json --voice zh-CN-YunjianNeural --out 目录 --title 章名
+python3 scripts/perform_book.py --in 书.md --out 目录 --voice zh-CN-YunjianNeural --jobs 6
+```
+
+模型不发声，它写谱：按文体分层（层题/经文/训释/引经/判语/对举/叙述），再切到小句级逐句定语速、音高、音量与停顿，句内音高逐级下坠、逗号微停、句间停顿抖动，引擎只负责执行。
 
 ## 逐章制作（长书推荐）
 
