@@ -132,3 +132,11 @@ python3 scripts/build_chapters.py --in 书.md --out 输出目录 --voice yunjian
 ## 整本实测
 
 《心经通释》全书 68,521 字，一次跑完：36 章、2,879 句、3 小时 22 分 34 秒音频、2,879 条字幕；合成约 28 分钟（2 进程、2 核 3 GB、无显卡），质检覆盖率 100%、峰值 -0.3 dB、长静音 0 处。
+
+<!-- research-repo-standard -->
+## 研究仓库入口
+
+- 引用：`CITATION.cff`
+- 模型入口：`llms.txt`、`ai.txt`
+- 文档页：README.md
+- 许可：MIT

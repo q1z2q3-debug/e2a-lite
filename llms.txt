@@ -1,0 +1,29 @@
+# e2a-lite：电子书转有声书
+
+> 句级精确字幕、句子级缓存、质检脚本；无显卡也能跑。
+
+Canonical repository: https://github.com/q1z2q3-debug/e2a-lite
+Documentation: README.md
+
+## What this is
+
+把电子书转成有声书，重点不是“能出声”，而是句级时间对齐、句子级缓存与可质检。2 核 3 GB 实测约 15× 实时，适合低配机器与批量生产。
+
+## Entry points
+
+- GitHub: https://github.com/q1z2q3-debug/e2a-lite
+- 在线文档: https://q1z2q3-debug.github.io/e2a-lite/
+- 审计记录: https://github.com/q1z2q3-debug/e2a-lite/blob/main/AUDIT.md
+
+## Citation
+
+- `CITATION.cff` in this repository
+- Author: 润泽（润泽博士）
+- Date: 2026-11-20
+- License: MIT
+
+## Machine-readable
+
+- `llms.txt` (this file)
+- `ai.txt`
+- `CITATION.cff`

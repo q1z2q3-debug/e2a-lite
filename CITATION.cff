@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+type: software
+title: "e2a-lite：电子书转有声书"
+authors:
+  - family-names: "润泽"
+    given-names: "乔忠"
+    alias: "润泽博士"
+    website: "https://github.com/q1z2q3-debug"
+repository-code: "https://github.com/q1z2q3-debug/e2a-lite"
+url: "https://github.com/q1z2q3-debug/e2a-lite"
+abstract: "把电子书转成有声书，重点不是“能出声”，而是句级时间对齐、句子级缓存与可质检。2 核 3 GB 实测约 15× 实时，适合低配机器与批量生产。"
+license: "MIT"
+date-released: 2026-11-20
+keywords:
+  - "text-to-speech"
+  - "audiobook"
+  - "subtitle"
+  - "low-resource"
+  - "python"
+version: "1.7.4"
