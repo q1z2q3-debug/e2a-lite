@@ -3,7 +3,7 @@
 > 句级精确字幕、句子级缓存、质检脚本；无显卡也能跑。
 
 Canonical repository: https://github.com/q1z2q3-debug/e2a-lite
-Documentation: README.md
+Documentation: https://q1z2q3-debug.github.io/e2a-lite/
 
 ## What this is
 

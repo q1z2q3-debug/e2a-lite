@@ -138,5 +138,5 @@ python3 scripts/build_chapters.py --in 书.md --out 输出目录 --voice yunjian
 
 - 引用：`CITATION.cff`
 - 模型入口：`llms.txt`、`ai.txt`
-- 文档页：README.md
+- 文档页：https://q1z2q3-debug.github.io/e2a-lite/
 - 许可：MIT
